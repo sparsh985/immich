@@ -2,6 +2,7 @@ import { canCopyImageToClipboard } from '$lib/utils/asset-utils';
 import { BaseEventManager } from '$lib/utils/base-event-manager.svelte';
 import { PersistedLocalStorage } from '$lib/utils/persisted';
 import type { ZoomImageWheelState } from '@zoom-image/core';
+import { cubicOut } from 'svelte/easing';
 
 const isShowDetailPanel = new PersistedLocalStorage<boolean>('asset-viewer-state', false);
 
@@ -21,6 +22,8 @@ export type Events = {
 
 export class AssetViewerManager extends BaseEventManager<Events> {
   #zoomState = $state(createDefaultZoomState());
+  #animationFrameId: number | null = null;
+  #isAnimatingFrame = false;
 
   imgRef = $state<HTMLImageElement | undefined>();
   isShowActivityPanel = $state(false);
@@ -66,10 +69,43 @@ export class AssetViewerManager extends BaseEventManager<Events> {
 
   onZoomChange(state: ZoomImageWheelState) {
     // bypass event emitter to avoid loop
+    if (!this.#isAnimatingFrame) {
+      this.#cancelAnimation();
+    }
     this.#zoomState = state;
   }
 
+  #cancelAnimation() {
+    if (this.#animationFrameId !== null) {
+      cancelAnimationFrame(this.#animationFrameId);
+      this.#animationFrameId = null;
+    }
+  }
+
+  animatedZoom(targetZoom: number, duration = 300) {
+    this.#cancelAnimation();
+
+    const startZoom = this.#zoomState.currentZoom;
+    const startTime = performance.now();
+
+    const frame = (currentTime: number) => {
+      const elapsed = currentTime - startTime;
+      const linearProgress = Math.min(elapsed / duration, 1);
+      const easedProgress = cubicOut(linearProgress);
+      const interpolatedZoom = startZoom + (targetZoom - startZoom) * easedProgress;
+
+      this.#isAnimatingFrame = true;
+      this.zoomState = { ...this.#zoomState, currentZoom: interpolatedZoom };
+      this.#isAnimatingFrame = false;
+
+      this.#animationFrameId = linearProgress < 1 ? requestAnimationFrame(frame) : null;
+    };
+
+    this.#animationFrameId = requestAnimationFrame(frame);
+  }
+
   resetZoomState() {
+    this.#cancelAnimation();
     this.zoomState = createDefaultZoomState();
   }
 
